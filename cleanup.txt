@@ -1,0 +1,55 @@
+cleanup
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <unistd.h>
+
+#define MSGSZ 256
+
+typedef struct msgbuf {
+    long mtype;        // Message type, used for directing the message
+    char mtext[MSGSZ]; // Content of the message
+} message_buf;
+
+int main() {
+    int msqid;
+    key_t key = 1234; // Common key for the message queue used in the system
+    char input;
+
+    // Access the message queue created by the air traffic controller
+    if ((msqid = msgget(key, 0666)) < 0) {
+        perror("msgget failed");
+        exit(1);
+    }
+
+    while (1) {
+        printf("Do you want the Air Traffic Control System to terminate?(Y for Yes and N for No)\n");
+        scanf(" %c", &input); // Read a single character
+
+        if (input == 'Y' || input == 'y') {
+            message_buf sbuf;
+            sbuf.mtype = 1; // Assuming 1 is used for system control messages
+            strcpy(sbuf.mtext, "Terminate"); // Message content to signal termination
+
+            // Send termination message to the air traffic controller
+            if (msgsnd(msqid, &sbuf, strlen(sbuf.mtext) + 1, 0) < 0) {
+                perror("msgsnd failed");
+                continue; // If message send fails, ask again
+            }
+
+            printf("Termination message sent to the Air Traffic Controller.\n");
+            break; // Break the loop and exit after sending termination signal
+        } else if (input == 'N' || input == 'n') {
+            printf("Continuing operations.\n");
+            // Simply continue to prompt again
+        } else {
+            printf("Invalid input. Please enter 'Y' for Yes or 'N' for No.\n");
+        }
+    }
+
+    return 0;
+}
+

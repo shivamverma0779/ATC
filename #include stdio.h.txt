@@ -1,0 +1,134 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <string.h>
+
+#define MAX_PASSENGERS 10
+#define CREW_WEIGHT 75
+#define CREW_COUNT_PASSENGER 7  // 5 cabin crew + 2 pilots for passenger planes
+#define CREW_COUNT_CARGO 2       // 2 pilots for cargo planes
+#define MSGSZ 256
+
+typedef struct {
+    long mtype;
+    char mtext[MSGSZ];
+} message_buf;
+
+typedef struct {
+    int id;
+    int type; // 0 for cargo, 1 for passenger
+    int num_passengers_or_items; // Used for passengers in passenger planes or cargo items in cargo planes
+    int total_weight;
+} Plane;
+
+void create_passenger_processes(int num_passengers, int pipefds[][2]);
+void calculate_total_weight(Plane *plane, int pipefds[][2], int crew_count);
+
+int main() {
+    Plane plane;
+    int msqid;
+    key_t key = 1234; // Common key for message queue
+
+    printf("Enter Plane ID:\n");
+    scanf("%d", &plane.id);
+
+    printf("Enter Type of Plane (0 for Cargo, 1 for Passenger):\n");
+    scanf("%d", &plane.type);
+
+    if ((msqid = msgget(key, 0666)) < 0) {
+        perror("msgget failed");
+        exit(1);
+    }
+
+    if (plane.type == 1) { // Passenger plane
+        printf("Enter Number of Occupied Seats:\n");
+        scanf("%d", &plane.num_passengers_or_items);
+        int pipefds[MAX_PASSENGERS][2];
+
+        for (int i = 0; i < plane.num_passengers_or_items; i++) {
+            if (pipe(pipefds[i]) == -1) {
+                perror("pipe failed");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        create_passenger_processes(plane.num_passengers_or_items, pipefds);
+        calculate_total_weight(&plane, pipefds, CREW_COUNT_PASSENGER);
+    } else { // Cargo plane
+        printf("Enter Number of Cargo Items:\n");
+        scanf("%d", &plane.num_passengers_or_items);
+
+        printf("Enter Average Weight of Cargo Items:\n");
+        int average_weight;
+        scanf("%d", &average_weight);
+
+        plane.total_weight = average_weight * plane.num_passengers_or_items + CREW_WEIGHT * CREW_COUNT_CARGO;
+    }
+
+    message_buf sbuf, rbuf;
+    sbuf.mtype = 1; // Designated message type for communication
+    snprintf(sbuf.mtext, MSGSZ, "Plane ID %d: Type %d, Total Weight %d kg, Departing", plane.id, plane.type, plane.total_weight);
+
+    if (msgsnd(msqid, &sbuf, strlen(sbuf.mtext)+1, IPC_NOWAIT) < 0) {
+        perror("msgsnd failed");
+        exit(1);
+    }
+
+    printf("Plane %d information sent to controller.\n", plane.id);
+
+    // Wait for the journey completion message
+    if (msgrcv(msqid, &rbuf, sizeof(rbuf.mtext), plane.id, 0) < 0) {
+        perror("msgrcv failed");
+        exit(1);
+    }
+
+    printf("Plane %d has successfully completed its journey from departure to arrival.\n", plane.id);
+    return 0;
+}
+
+void create_passenger_processes(int num_passengers, int pipefds[][2]) {
+    for (int i = 0; i < num_passengers; i++) {
+        pid_t pid = fork();
+        if (pid == 0) { // Child process
+            close(pipefds[i][0]); // Close reading end
+            int weight, luggage;
+            printf("Enter Your Body Weight:\n");
+            scanf("%d", &weight);
+            printf("Enter Weight of Your Luggage:\n");
+            scanf("%d", &luggage);
+            write(pipefds[i][1], &weight, sizeof(weight));
+            write(pipefds[i][1], &luggage, sizeof(luggage));
+            close(pipefds[i][1]);
+            exit(0);
+        } else if (pid > 0) {
+            close(pipefds[i][1]); // Close writing end in parent
+        } else {
+            perror("fork failed");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    for (int i = 0; i < num_passengers; i++) {
+        wait(NULL); // Wait for all child processes to terminate
+    }
+}
+
+void calculate_total_weight(Plane *plane, int pipefds[][2], int crew_count) {
+    int total_passenger_weight = 0;
+    int total_luggage_weight = 0;
+
+    for (int i = 0; i < plane->num_passengers_or_items; i++) {
+        int weight, luggage;
+        read(pipefds[i][0], &weight, sizeof(weight));
+        read(pipefds[i][0], &luggage, sizeof(luggage));
+        total_passenger_weight += weight;
+        total_luggage_weight += luggage;
+        close(pipefds[i][0]);
+    }
+
+    plane.total_weight = total_passenger_weight + total_luggage_weight + CREW_WEIGHT * crew_count;
+}

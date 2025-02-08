@@ -1,0 +1,125 @@
+airpot.c
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <semaphore.h>
+
+#define MAX_RUNWAYS 10
+#define MSGSZ 256
+#define BACKUP_RUNWAY_CAPACITY 15000
+
+typedef struct {
+    int capacity;
+    sem_t semaphore;
+} Runway;
+
+typedef struct {
+    long mtype;
+    char mtext[MSGSZ];
+} message_buf;
+
+typedef struct {
+    int airportNumber;
+    Runway runways[MAX_RUNWAYS + 1];
+    int numRunways;
+    int msqid;
+} Airport;
+
+void *handle_plane(void *arg) {
+    message_buf *msg = (message_buf *)arg;
+    Airport *airport = (Airport *)msg->mtype;
+
+    // Extract the plane ID and weight from the message
+    int planeID, planeWeight;
+    sscanf(msg->mtext, "Plane %d Weight %d", &planeID, &planeWeight);
+
+    // Find the appropriate runway based on best-fit logic
+    int index = -1;
+    for (int i = 0; i < airport->numRunways; i++) {
+        if (sem_trywait(&airport->runways[i].semaphore) == 0) { // Check if the runway is available
+            if (airport->runways[i].capacity >= planeWeight && (index == -1 || airport->runways[i].capacity < airport->runways[index].capacity)) {
+                if (index != -1) {
+                    sem_post(&airport->runways[index].semaphore); // Release the previously selected runway
+                }
+                index = i; // Select this runway
+            } else {
+                sem_post(&airport->runways[i].semaphore); // Release this runway as it's not suitable
+            }
+        }
+    }
+
+    if (index == -1) { // Use backup runway if no other is suitable
+        sem_wait(&airport->runways[airport->numRunways].semaphore);
+        index = airport->numRunways;
+    }
+
+    // Simulate the boarding/loading or deboarding/unloading
+    printf("Plane %d has started boarding/loading on Runway %d of Airport %d\n", planeID, index + 1, airport->airportNumber);
+    sleep(3); // Simulate time delay
+    printf("Plane %d has completed boarding/loading and taken off from Runway %d of Airport %d\n", planeID, index + 1, airport->airportNumber);
+    
+    // Release the runway semaphore
+    sem_post(&airport->runways[index].semaphore);
+
+    // Send completion message back to the air traffic controller
+    sprintf(msg->mtext, "Plane %d has successfully taken off from Airport %d", planeID, airport->airportNumber);
+    if (msgsnd(airport->msqid, msg, strlen(msg->mtext)+1, 0) < 0) {
+        perror("msgsnd failed");
+    }
+
+    free(msg);
+    pthread_exit(NULL);
+}
+
+int main() {
+    int msqid;
+    key_t key = 1234; // Common key for message queue
+    Airport airport;
+
+    printf("Enter Airport Number: ");
+    scanf("%d", &airport.airportNumber);
+    printf("Enter number of Runways: ");
+    scanf("%d", &airport.numRunways);
+
+    // Initialize runways and their capacities
+    for (int i = 0; i < airport.numRunways; i++) {
+        printf("Enter loadCapacity of Runway %d: ", i + 1);
+        scanf("%d", &airport.runways[i].capacity);
+        sem_init(&airport.runways[i].semaphore, 0, 1); // Initialize the semaphore
+    }
+    // Initialize the backup runway
+    airport.runways[airport.numRunways].capacity = BACKUP_RUNWAY_CAPACITY;
+    sem_init(&airport.runways[airport.numRunways].semaphore, 0, 1);
+
+    // Access the message queue
+    if ((msqid = msgget(key, 0666)) < 0) {
+        perror("msgget failed");
+        exit(1);
+    }
+    airport.msqid = msqid;
+
+    while (1) {
+        message_buf *rbuf = malloc(sizeof(message_buf));
+        if (msgrcv(msqid, rbuf, sizeof(rbuf->mtext), airport.airportNumber, 0) < 0) {
+            perror("msgrcv failed");
+            exit(1);
+        }
+
+        pthread_t thread_id;
+        pthread_create(&thread_id, NULL, handle_plane, rbuf);
+        pthread_detach(thread_id);
+    }
+
+    // Cleanup
+    for (int i = 0; i <= airport.numRunways; i++) {
+        sem_destroy(&airport.runways[i].semaphore);
+    }
+
+    return 0;
+}

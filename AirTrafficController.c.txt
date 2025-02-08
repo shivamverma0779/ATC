@@ -1,0 +1,86 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/mq.h>
+#include <string.h>
+#include <pthread.h>
+
+#define MAX_NUM_AIRPORTS 10
+#define MAX_NUM_PLANES 10
+#define MAX_NUM_RUNWAYS 10
+#define MAX_WEIGHT 12000
+#define MAX_NUM_OCCUPIED_SEATS 10
+#define MAX_NUM_PASSENGERS 10
+#define MAX_LUGGAGE_WEIGHT 25
+#define MAX_BODY_WEIGHT 100
+#define BUFFER_SIZE 1024
+
+struct airport_args {
+    int airport_id;
+    int num_runways;
+    int runway_load_capacities[MAX_NUM_RUNWAYS];
+};
+
+struct plane_args {
+    int plane_id;
+    int type;
+    int num_occupied_seats;
+    int airport_id_departure;
+    int airport_id_arrival;
+    int total_weight;
+};
+
+void *airport_thread(void *arg) {
+    struct airport_args *airport_args = (struct airport_args *) arg;
+    int airport_id = airport_args->airport_id;
+    int num_runways = airport_args->num_runways;
+    int runway_load_capacities[num_runways];
+    int i;
+
+    for (i = 0; i < num_runways; i++) {
+        runway_load_capacities[i] = airport_args->runway_load_capacities[i];
+    }
+
+    // Simulate airport operations here
+
+    return NULL;
+}
+
+int main() {
+    int i, j,num_airports, num_planes, num_runways;
+    struct airport_args airport_args[MAX_NUM_AIRPORTS];
+    struct plane_args plane_args[MAX_NUM_PLANES];
+
+    printf("Enter the number of airports to be handled/managed: ");
+    scanf("%d", &num_airports);
+
+    for (i = 0; i < num_airports; i++) {
+        printf("Enter Airport Number %d: ", i+1);
+        scanf("%d", &airport_args[i].airport_id);
+
+        printf("Enter number of Runways for Airport %d: ", airport_args[i].airport_id);
+        scanf("%d", &num_runways);
+
+        printf("Enter loadCapacity of Runways for Airport %d (give as a space separated list in a single line): ", airport_args[i].airport_id);
+        for (j = 0; j < num_runways; j++) {
+            scanf("%d", &airport_args[i].runway_load_capacities[j]);
+        }
+
+        if (pthread_create(&airport_threads[i], NULL, airport_thread, &airport_args[i]) < 0) {
+            perror("Error creating thread");
+            exit(1);
+        }
+    }
+
+    for (i = 0; i < num_airports; i++) {
+        if (pthread_join(airport_threads[i], NULL) < 0) {
+            perror("Error joining thread");
+            exit(1);
+        }
+    }
+
+    return 0;
+}

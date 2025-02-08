@@ -1,0 +1,39 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+
+#define MAX_SIZE 100
+
+struct message_buffer {
+    long message_type;
+    char message[MAX_SIZE];
+} message;
+
+int main() {
+    key_t key;
+    int msgid;
+
+    key = ftok("AirTrafficController", 65);
+    msgid = msgget(key, 0666);
+
+    while (1) {
+        printf("Do you want the Air Traffic Control System to terminate?(Y for Yes and N for No)\n");
+        scanf("%s", message.message);
+
+        if (strcmp(message.message, "Y") == 0) {
+            message.message_type = 3;
+            msgsnd(msgid, &message, sizeof(message), 0);
+            printf("Termination request sent to Air Traffic Controller.\n");
+            break;
+        } else if (strcmp(message.message, "N") == 0) {
+            continue;
+        } else {
+            printf("Invalid input. Please enter Y or N.\n");
+        }
+    }
+
+    return 0;
+}

@@ -1,0 +1,76 @@
+atc 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define MSGSZ 256
+#define FILE_PATH "AirTrafficController.txt"
+
+typedef struct msgbuf {
+    long mtype;        // Message type, used for directing the message
+    char mtext[MSGSZ]; // Content of the message
+} message_buf;
+
+int main() {
+    int msqid, numAirports;
+    key_t key = 1234; // Common key for the message queue
+
+    // Set up the message queue
+    if ((msqid = msgget(key, IPC_CREAT | 0666)) < 0) {
+        perror("msgget failed");
+        exit(1);
+    }
+
+    // Input the number of airports
+    printf("Enter the number of airports to be handled/managed: ");
+    scanf("%d", &numAirports);
+
+    FILE *file = fopen(FILE_PATH, "a"); // Open the log file for appending
+    if (file == NULL) {
+        perror("Failed to open the file");
+        exit(1);
+    }
+
+    printf("Air Traffic Controller started. Awaiting messages...\n");
+
+    while (1) {
+        message_buf rbuf;
+
+        // Receive messages
+        if (msgrcv(msqid, &rbuf, sizeof(rbuf.mtext), 0, 0) < 0) {
+            perror("msgrcv failed");
+            continue;  // Continue to process next messages
+        }
+
+        // Parse the message to determine type and content
+        int planeID, departureAirport, arrivalAirport;
+        if (sscanf(rbuf.mtext, "Terminate") == 0) {
+            fprintf(file, "System termination initiated.\n");
+            fclose(file); // Close the log file before termination
+            break;
+        } else if (sscanf(rbuf.mtext, "Plane %d has departed from Airport %d and will land at Airport %d", &planeID, &departureAirport, &arrivalAirport) == 3) {
+            fprintf(file, "Plane %d has departed from Airport %d and will land at Airport %d.\n", planeID, departureAirport, arrivalAirport);
+            fflush(file); // Make sure to flush to disk
+
+            // Echo back to the plane that it can terminate now
+            message_buf sbuf;
+            sbuf.mtype = planeID;
+            sprintf(sbuf.mtext, "Plane %d has successfully completed its journey from Airport %d to Airport %d.", planeID, departureAirport, arrivalAirport);
+            if (msgsnd(msqid, &sbuf, strlen(sbuf.mtext) + 1, 0) < 0) {
+                perror("msgsnd failed");
+            }
+        }
+    }
+
+    // Cleanup the message queue on shutdown
+    if (msgctl(msqid, IPC_RMID, NULL) == -1) {
+        perror("msgctl failed");
+    }
+
+    printf("Air traffic controller process terminated.\n");
+    return 0;
+}
